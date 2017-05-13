@@ -1,6 +1,7 @@
 package org.iskcon.icc.testbg.utils;
 
 import android.media.MediaDescription;
+import android.media.MediaMetadata;
 import android.media.browse.MediaBrowser;
 import android.media.session.MediaSession;
 import android.net.Uri;
@@ -26,7 +27,7 @@ public class QueueHelper {
         //I guess MusicProvider already has fetched the music and some method will make it available for getQueue
         //SAMPLE METHOD ALERT
         Log.d(TAG, "getQueue");
-        int mId1 = R.raw.dun_dun_dun;
+        /*int mId1 = R.raw.dun_dun_dun;
         int mId2 = R.raw.rainbow_dun_dun;
         MediaSession.QueueItem queueItem1 = new MediaSession.QueueItem(
                 new MediaDescription.Builder()
@@ -41,7 +42,26 @@ public class QueueHelper {
         List<MediaSession.QueueItem> queueItems = new ArrayList<>();
         queueItems.add(queueItem1);
         queueItems.add(queueItem2);
-        return queueItems;
+        return queueItems;*/
+
+        Iterable<MediaMetadata> tracks = musicProvider.getChapters();
+        if (tracks == null) {
+            return null;
+        }
+        return convertToQueue(tracks);
+    }
+
+    private static List<MediaSession.QueueItem> convertToQueue(Iterable<MediaMetadata> tracks) {
+        List<MediaSession.QueueItem> queue = new ArrayList<>();
+        int count = 0;
+
+        for (MediaMetadata track : tracks) {
+            MediaSession.QueueItem item = new MediaSession.QueueItem(
+                    track.getDescription(), count++
+            );
+            queue.add(item);
+        }
+        return queue;
     }
 
     public static int getMusicIndexOnQueue(List<MediaSession.QueueItem> queueItems, String mediaId) {

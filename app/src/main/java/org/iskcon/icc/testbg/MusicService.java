@@ -4,7 +4,8 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
-import android.media.browse.MediaBrowser;
+import android.media.MediaMetadata;
+import android.media.browse.MediaBrowser.MediaItem;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
 import android.os.Bundle;
@@ -17,6 +18,7 @@ import org.iskcon.icc.testbg.utils.MusicProvider;
 import org.iskcon.icc.testbg.utils.QueueHelper;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Queue;
 
@@ -97,8 +99,36 @@ public class MusicService extends MediaBrowserService implements PlayBack.Callba
     }
 
     @Override
-    public void onLoadChildren(String parentId, Result<List<MediaBrowser.MediaItem>> result) {
+    public void onLoadChildren(String parentId, Result<List<MediaItem>> result) {
         Log.d(TAG, "onLoadChildren MusicService class");
+        if (!musicProvider.isInitialized()) {
+            // buildMedia returns boolean. OnSuccess it caches the content in a collectionList in musicProvider
+            // onSuccess we call the loadChildrenImpl which it turn uses a MusicProvider method to get stuff done
+            musicProvider.buildQueue();
+            loadChildrenImpl(result);
+            /*if (musicProvider.buildQueue()) {
+                Log.d(TAG, "musicProvider is not initialized. Called buildQueue and it returned true");
+                loadChildrenImpl(result);
+            } else {
+                updatePlaybackState("Error no metadata");
+                result.sendResult(Collections.<MediaItem>emptyList());
+            }*/
+        } else {
+            //loadChildrenImpl(result);
+        }
+
+    }
+
+    private void loadChildrenImpl(Result<List<MediaItem>> result) {
+        Log.d(TAG, "loadChildrenImpl - Building the metadata and adding items");
+        List<MediaItem> mediaItems = new ArrayList<>();
+
+        for (MediaMetadata track : musicProvider.getChapters()) {
+            MediaItem item = new MediaItem(track.getDescription(), MediaItem.FLAG_PLAYABLE);
+            mediaItems.add(item);
+        }
+        Log.d(TAG, "loadChildrenImpl - My mediaItems are " + mediaItems);
+        result.sendResult(mediaItems);
     }
 
     @Override
@@ -192,6 +222,14 @@ public class MusicService extends MediaBrowserService implements PlayBack.Callba
                 handlePlayRequest();
             } else {
                 handleStopRequest("Cannot skip");
+            }
+        }
+
+        @Override
+        public void onSkipToQueueItem(long id) {
+            if (playingQueue != null && !playingQueue.isEmpty()) {
+                currentPlayingIndexOnQueue = QueueHelper.getMusicIndexOnQueue(playingQueue, String.valueOf(id));
+                handlePlayRequest();
             }
         }
     }
