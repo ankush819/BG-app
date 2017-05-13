@@ -81,7 +81,7 @@ public class PlayBack implements AudioManager.OnAudioFocusChangeListener, OnComp
         Log.d(TAG, "start from playBack");
     }
 
-    public void stop() {
+    public void stop(boolean notifyListeners) {
         //TODO : Implement the method by referring the Playback example
         Log.d(TAG, "stop from playback");
     }

@@ -134,6 +134,15 @@ public class MusicService extends MediaBrowserService implements PlayBack.Callba
         public void onPlay() {
             super.onPlay();
             Log.d(TAG, "onPlay MediaSessionCallBack");
+
+            if (playingQueue == null || !playingQueue.isEmpty()) {
+                //No playing items exist. Fetch it from the QueueHelper
+                //TODO : Implement the logic for the same
+            }
+
+            if (playingQueue != null && !playingQueue.isEmpty()) {
+                handlePlayRequest();
+            }
         }
 
         @Override
@@ -159,6 +168,32 @@ public class MusicService extends MediaBrowserService implements PlayBack.Callba
             Log.d(TAG, "MediaSessionCallback class - pause");
             handlePauseRequest();
         }
+
+        @Override
+        public void onSkipToPrevious() {
+            currentPlayingIndexOnQueue--;
+            if (playingQueue != null && currentPlayingIndexOnQueue < 0) {
+                currentPlayingIndexOnQueue = 0;
+            }
+            if (QueueHelper.isIndexPlayable(currentPlayingIndexOnQueue, playingQueue)) {
+                handlePlayRequest();
+            } else {
+                handleStopRequest("Cannot skip");
+            }
+        }
+
+        @Override
+        public void onSkipToNext() {
+            currentPlayingIndexOnQueue++;
+            if (playingQueue != null && currentPlayingIndexOnQueue >= playingQueue.size()) {
+                currentPlayingIndexOnQueue = 0;
+            }
+            if (QueueHelper.isIndexPlayable(currentPlayingIndexOnQueue, playingQueue)) {
+                handlePlayRequest();
+            } else {
+                handleStopRequest("Cannot skip");
+            }
+        }
     }
 
     public void handlePlayRequest() {
@@ -182,6 +217,18 @@ public class MusicService extends MediaBrowserService implements PlayBack.Callba
     public void handlePauseRequest() {
         Log.d(TAG, "handlePauseRequest");
         playBack.pause();
+    }
+
+    private void handleStopRequest(String withError) {
+        playBack.stop(true);
+        // reset the delayed stop handler.
+
+        //TODO : Implement delayed handler etc.,
+        updatePlaybackState(withError);
+
+        // service is no longer necessary. Will be started again if needed.
+        stopSelf();
+        serviceStarted = false;
     }
 
     private void updatePlaybackState(String error) {

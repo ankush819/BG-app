@@ -84,6 +84,7 @@ public class PlayFragment extends Fragment {
             }
             Log.d(TAG, "sessionCallback - onPlaybackstatechanged - playBackState is " + state);
             playBackState = state;
+            PlayFragment.this.onPlayBackStateChanged(state);
         }
     };
 
@@ -103,7 +104,7 @@ public class PlayFragment extends Fragment {
         previousButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-
+                skipToPrevious();
             }
         });
 
@@ -132,7 +133,7 @@ public class PlayFragment extends Fragment {
         nextButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-
+                skipToNext();
             }
         });
 
@@ -174,6 +175,9 @@ public class PlayFragment extends Fragment {
     private void onPlayBackStateChanged(PlaybackState state) {
         //TODO Setting the active QueueItem ID
         Log.d(TAG, "in onPlayBackStateChanged and the state is " + state);
+
+        previousButton.setEnabled((state.getActions() & PlaybackState.ACTION_SKIP_TO_PREVIOUS) != 0);
+        nextButton.setEnabled((state.getActions() & PlaybackState.ACTION_SKIP_TO_NEXT) != 0);
     }
 
     private void playMedia() {
@@ -194,10 +198,12 @@ public class PlayFragment extends Fragment {
 
     private void skipToPrevious() {
         Log.d(TAG, "skipToPrevious");
+        transportControls.skipToPrevious();
     }
 
     private void skipToNext() {
         Log.d(TAG, "skipToNext");
+        transportControls.skipToNext();
     }
 
     private static class PlayAdapater extends ArrayAdapter<MediaSession.QueueItem>  {
