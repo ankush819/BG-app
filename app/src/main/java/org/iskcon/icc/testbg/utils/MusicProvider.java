@@ -102,7 +102,7 @@ public class MusicProvider {
     private List<String> getChapterNamesFromRaw(){
         List<String> chapterNames = new ArrayList<>();
         Field[] fields = R.raw.class.getFields();
-        Pattern pattern = Pattern.compile("dun");
+        Pattern pattern = Pattern.compile("gita");
         Matcher matcher;
         for(int count=0; count < fields.length; count++){
             matcher = pattern.matcher(fields[count].getName());

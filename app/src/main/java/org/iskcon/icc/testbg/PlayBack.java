@@ -43,7 +43,7 @@ public class PlayBack implements AudioManager.OnAudioFocusChangeListener, OnComp
     private static final int AUDIO_FOCUSED = 2;
 
     private IntentFilter audioNoisyIntentFilter = new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
-    private boolean mAudioNoisyReceiverRegistered;
+    private volatile boolean mAudioNoisyReceiverRegistered;
     private boolean playOnFocusGain;
     private MusicProvider musicProvider;
     private int audioFocus = AUDIO_NO_FOCUS_NO_DUCK;
@@ -66,8 +66,8 @@ public class PlayBack implements AudioManager.OnAudioFocusChangeListener, OnComp
 
     private int mState;
     private Callback mCallback;
-    private String currentMediaId;
-    private int currentPosition;
+    private volatile String currentMediaId;
+    private volatile int currentPosition;
 
 
     public PlayBack(MusicService service, MusicProvider musicProvider) {
@@ -82,8 +82,17 @@ public class PlayBack implements AudioManager.OnAudioFocusChangeListener, OnComp
     }
 
     public void stop(boolean notifyListeners) {
-        //TODO : Implement the method by referring the Playback example
         Log.d(TAG, "stop from playback");
+        mState = PlaybackState.STATE_STOPPED;
+        if (notifyListeners && mCallback != null) {
+            mCallback.onPlaybackStatusChanged(mState);
+        }
+        currentPosition = getCurrentStreamPosition();
+
+        giveUpAudioFocus();
+        unregisterAudioNoisyReceiver();
+
+        relaxResources(true);
     }
 
     public void setState(int state) {
@@ -108,10 +117,10 @@ public class PlayBack implements AudioManager.OnAudioFocusChangeListener, OnComp
     }
 
     public void play(Context context, QueueItem queueItem) {
-        //TODO Register Noisy receiver
         Log.d(TAG, "play from playback");
         playOnFocusGain = true;
         tryToGetAudioFocus();
+        registerAudioNoisyReceiver();
         String mediaId = queueItem.getDescription().getMediaId();
         boolean mediaHasChanged = !TextUtils.equals(mediaId, currentMediaId);
         if (mediaHasChanged) {
@@ -123,7 +132,7 @@ public class PlayBack implements AudioManager.OnAudioFocusChangeListener, OnComp
             configMediaPlayerState();
         } else {
             mState = PlaybackState.STATE_STOPPED;
-
+            relaxResources(false);
             AssetFileDescriptor afd = context.getResources().openRawResourceFd(
                     Integer.parseInt(queueItem.getDescription().getMediaId()));
             if( afd == null ) {
@@ -132,7 +141,7 @@ public class PlayBack implements AudioManager.OnAudioFocusChangeListener, OnComp
             try {
                 createMediaPlayerIfNeeded();
 
-                mState = PlaybackState.STATE_PLAYING; //TODO Check if this is right
+                mState = PlaybackState.STATE_BUFFERING; //TODO Check if this is right
                 mediaPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
                 mediaPlayer.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
 
@@ -142,7 +151,9 @@ public class PlayBack implements AudioManager.OnAudioFocusChangeListener, OnComp
                     mCallback.onPlaybackStatusChanged(mState);
                 }
             } catch (IOException ex) {
-
+                if (mCallback != null) {
+                    mCallback.onError(ex.getMessage());
+                }
             }
         }
     }
@@ -153,17 +164,30 @@ public class PlayBack implements AudioManager.OnAudioFocusChangeListener, OnComp
                 mediaPlayer.pause();
                 currentPosition = mediaPlayer.getCurrentPosition();
             }
-            //TODO : Call to relax resources
+            relaxResources(false);
             giveUpAudioFocus();
         }
         mState = PlaybackState.STATE_PAUSED;
         if (mCallback != null) {
             mCallback.onPlaybackStatusChanged(mState);
         }
-        //TODO : Call to unregister noisy receiver
+        unregisterAudioNoisyReceiver();
     }
 
-    //TODO : Implement seekTo method
+
+    public void seekTo(int position) {
+        if (mediaPlayer == null) {
+            currentPosition = position;
+        } else {
+            if (mediaPlayer.isPlaying()) {
+                mState = PlaybackState.STATE_BUFFERING;
+            }
+            mediaPlayer.seekTo(position);
+            if (mCallback != null) {
+                mCallback.onPlaybackStatusChanged(mState);
+            }
+        }
+    }
 
     public void setCallback(Callback callback) {
         this.mCallback = callback;
@@ -218,18 +242,40 @@ public class PlayBack implements AudioManager.OnAudioFocusChangeListener, OnComp
             }
         }
         if (mCallback != null) {
-            mCallback.onPlaybackStatusChanged(mState); //TODO Need to implement this method
+            mCallback.onPlaybackStatusChanged(mState);
         }
     }
 
     @Override
     public void onAudioFocusChange(int focusChange) {
-        //TODO : Implement this method
+        if (focusChange == AudioManager.AUDIOFOCUS_GAIN) {
+            audioFocus = AUDIO_FOCUSED;
+        } else if (focusChange == AudioManager.AUDIOFOCUS_LOSS ||
+                focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT ||
+                focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) {
+            boolean canDuck = focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK;
+            audioFocus = canDuck ? AUDIO_NO_FOCUS_CAN_DUCK : AUDIO_NO_FOCUS_NO_DUCK;
+
+            if (mState == PlaybackState.STATE_PLAYING && !canDuck) {
+                playOnFocusGain = true;
+            }
+        } else {
+            Log.d(TAG, "Ignoring unsupported focusChange");
+        }
+        configMediaPlayerState();
     }
 
     @Override
     public void onSeekComplete(MediaPlayer mp) {
         //TODO : Implement this method
+        currentPosition = mp.getCurrentPosition();
+        if (mState == PlaybackState.STATE_BUFFERING) {
+            mediaPlayer.start();
+            mState = PlaybackState.STATE_PLAYING;
+        }
+        if (mCallback != null) {
+            mCallback.onPlaybackStatusChanged(mState);
+        }
     }
 
     @Override
@@ -244,8 +290,10 @@ public class PlayBack implements AudioManager.OnAudioFocusChangeListener, OnComp
 
     @Override
     public boolean onError(MediaPlayer mp, int what, int extra) {
-        //TODO : Implement this method
-        return false;
+        if (mCallback != null) {
+            mCallback.onError("MediaPlayer error " + what + " (" + extra + ")");
+        }
+        return true;
     }
 
     @Override
@@ -271,6 +319,19 @@ public class PlayBack implements AudioManager.OnAudioFocusChangeListener, OnComp
         }
     }
 
+    private void relaxResources(boolean releaseMediaPlayer) {
+        musicService.stopForeground(true);
+
+        // stop and release the Media Player, if it's available
+        if (releaseMediaPlayer && mediaPlayer != null) {
+            mediaPlayer.reset();
+            mediaPlayer.release();
+            mediaPlayer = null;
+        }
+    }
+
+
+
     private void registerAudioNoisyReceiver() {
         if (!mAudioNoisyReceiverRegistered) {
             musicService.registerReceiver(audioNoisyReceiver, audioNoisyIntentFilter);
@@ -284,8 +345,6 @@ public class PlayBack implements AudioManager.OnAudioFocusChangeListener, OnComp
             mAudioNoisyReceiverRegistered = false;
         }
     }
-
-    //TODO : Implement Relax Resources method
 
     interface Callback {
         /**

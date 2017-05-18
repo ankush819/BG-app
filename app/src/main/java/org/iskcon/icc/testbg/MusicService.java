@@ -9,6 +9,8 @@ import android.media.browse.MediaBrowser.MediaItem;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Message;
 import android.os.SystemClock;
 import android.service.media.MediaBrowserService;
 import android.support.annotation.IntDef;
@@ -17,6 +19,7 @@ import android.util.Log;
 import org.iskcon.icc.testbg.utils.MusicProvider;
 import org.iskcon.icc.testbg.utils.QueueHelper;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -34,13 +37,17 @@ public class MusicService extends MediaBrowserService implements PlayBack.Callba
     public static final String CMD_NAME = "CMD_NAME";
     public static final String CMD_PAUSE = "CMD_PAUSE";
 
+    private static final int STOP_DELAY = 30000;
+
     private MediaSession mediaSession;
     private PlayBack playBack;
     private List<MediaSession.QueueItem> queueItems;
     private List<MediaSession.QueueItem> playingQueue;
     private MusicProvider musicProvider;
+    private MediaNotificationManager mediaNotificationManager;
     private int currentPlayingIndexOnQueue;
     private boolean serviceStarted;
+    private DelayedStopHandler delayedStopHandler = new DelayedStopHandler(this);
 
     @Override
     public void onCreate() {
@@ -49,6 +56,8 @@ public class MusicService extends MediaBrowserService implements PlayBack.Callba
 
         playingQueue = new ArrayList<>();
         musicProvider = new MusicProvider();
+
+
         mediaSession = new MediaSession(this, "MusicService");
         setSessionToken(mediaSession.getSessionToken());
         mediaSession.setCallback(new MediaSessionCallback());
@@ -60,8 +69,6 @@ public class MusicService extends MediaBrowserService implements PlayBack.Callba
         playBack.setCallback(this);
         playBack.start();
 
-        //TODO : Set Session Activity & notification manager
-
         Context context = getApplicationContext();
         Intent intent = new Intent(context, MainActivity.class);
         PendingIntent pi = PendingIntent.getActivity(context, 99 /*request code*/,
@@ -70,7 +77,7 @@ public class MusicService extends MediaBrowserService implements PlayBack.Callba
 
         updatePlaybackState(null);
 
-
+        //TODO : notification manager
     }
 
     @Override
@@ -92,10 +99,18 @@ public class MusicService extends MediaBrowserService implements PlayBack.Callba
     }
 
     @Override
+    public void onDestroy() {
+        handleStopRequest(null);
+
+        delayedStopHandler.removeCallbacksAndMessages(null);
+        mediaSession.release();
+    }
+
+    @Override
     public BrowserRoot onGetRoot(String clientPackageName, int clientUid, Bundle rootHints) {
         //If we return null no one call connect to the service
         Log.d(TAG, "onGetRoot");
-        return new BrowserRoot("", null);
+        return new BrowserRoot("PARENT", null);
     }
 
     @Override
@@ -106,15 +121,8 @@ public class MusicService extends MediaBrowserService implements PlayBack.Callba
             // onSuccess we call the loadChildrenImpl which it turn uses a MusicProvider method to get stuff done
             musicProvider.buildQueue();
             loadChildrenImpl(result);
-            /*if (musicProvider.buildQueue()) {
-                Log.d(TAG, "musicProvider is not initialized. Called buildQueue and it returned true");
-                loadChildrenImpl(result);
-            } else {
-                updatePlaybackState("Error no metadata");
-                result.sendResult(Collections.<MediaItem>emptyList());
-            }*/
         } else {
-            //loadChildrenImpl(result);
+            loadChildrenImpl(result);
         }
 
     }
@@ -143,7 +151,7 @@ public class MusicService extends MediaBrowserService implements PlayBack.Callba
             }
             handlePlayRequest();
         } else {
-            handlePauseRequest();
+            handleStopRequest(null);
         }
     }
 
@@ -162,7 +170,6 @@ public class MusicService extends MediaBrowserService implements PlayBack.Callba
 
         @Override
         public void onPlay() {
-            super.onPlay();
             Log.d(TAG, "onPlay MediaSessionCallBack");
 
             if (playingQueue == null || !playingQueue.isEmpty()) {
@@ -200,6 +207,11 @@ public class MusicService extends MediaBrowserService implements PlayBack.Callba
         }
 
         @Override
+        public void onStop() {
+            handleStopRequest(null);
+        }
+
+        @Override
         public void onSkipToPrevious() {
             currentPlayingIndexOnQueue--;
             if (playingQueue != null && currentPlayingIndexOnQueue < 0) {
@@ -227,16 +239,23 @@ public class MusicService extends MediaBrowserService implements PlayBack.Callba
 
         @Override
         public void onSkipToQueueItem(long id) {
+            Log.d(TAG, "onSkipToQueueItem and my id is " + id);
             if (playingQueue != null && !playingQueue.isEmpty()) {
                 currentPlayingIndexOnQueue = QueueHelper.getMusicIndexOnQueue(playingQueue, String.valueOf(id));
                 handlePlayRequest();
             }
         }
+
+        @Override
+        public void onSeekTo(long pos) {
+            playBack.seekTo((int) pos);
+        }
     }
 
-    public void handlePlayRequest() {
+    private void handlePlayRequest() {
         Log.d(TAG, "handlePlayRequest");
 
+        delayedStopHandler.removeCallbacksAndMessages(null);
         if (!serviceStarted) {
             startService(new Intent(getApplicationContext(), MusicService.class));
             serviceStarted = true;
@@ -246,27 +265,38 @@ public class MusicService extends MediaBrowserService implements PlayBack.Callba
             mediaSession.setActive(true);
         }
 
+        Log.d(TAG, "current" + currentPlayingIndexOnQueue);
         if(QueueHelper.isIndexPlayable(currentPlayingIndexOnQueue, playingQueue)) {
-            //updateMetadata missing here. Barebones playback for now.
+            Log.d(TAG, "handlePlayRequest - updateMeta");
+            updateMetaData();
             playBack.play(this, playingQueue.get(currentPlayingIndexOnQueue));
         }
     }
 
-    public void handlePauseRequest() {
+    private void handlePauseRequest() {
         Log.d(TAG, "handlePauseRequest");
         playBack.pause();
+
+        delayedStopHandler.removeCallbacksAndMessages(null);
+        delayedStopHandler.sendEmptyMessageDelayed(0, STOP_DELAY);
     }
 
     private void handleStopRequest(String withError) {
         playBack.stop(true);
         // reset the delayed stop handler.
 
-        //TODO : Implement delayed handler etc.,
+        delayedStopHandler.removeCallbacksAndMessages(null);
+        delayedStopHandler.sendEmptyMessageDelayed(0, STOP_DELAY);
+
         updatePlaybackState(withError);
 
         // service is no longer necessary. Will be started again if needed.
         stopSelf();
         serviceStarted = false;
+    }
+
+    private void updateMetaData() {
+        Log.d(TAG, "updateMetaData");
     }
 
     private void updatePlaybackState(String error) {
@@ -314,5 +344,25 @@ public class MusicService extends MediaBrowserService implements PlayBack.Callba
         return actions;
     }
 
+    private static class DelayedStopHandler extends Handler {
+        private final WeakReference<MusicService> weakReference;
 
+        private DelayedStopHandler(MusicService service) {
+            weakReference = new WeakReference<>(service);
+        }
+
+        @Override
+        public void handleMessage(Message msg) {
+            MusicService musicService = weakReference.get();
+
+            if (musicService != null && musicService.playBack != null) {
+                if (musicService.playBack.isPlaying()) {
+                    return;
+                }
+
+                musicService.stopSelf();
+                musicService.serviceStarted = false;
+            }
+        }
+    }
 }

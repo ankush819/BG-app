@@ -86,6 +86,11 @@ public class PlayFragment extends Fragment {
             playBackState = state;
             PlayFragment.this.onPlayBackStateChanged(state);
         }
+
+        @Override
+        public void onQueueChanged(@Nullable List<MediaSession.QueueItem> queue) {
+            Log.d(TAG, "onQueueChanged");
+        }
     };
 
     public static PlayFragment newInstance() {
